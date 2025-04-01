@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ATMB 非CMRA地址筛选工具</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+            color: #333;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+        h1 {
+            color: #2c3e50;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .section {
+            margin-bottom: 30px;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        .section h2 {
+            margin-top: 0;
+            color: #3498db;
+            font-size: 1.2em;
+        }
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: bold;
+        }
+        input[type="text"] {
+            width: 100%;
+            padding: 8px;
+            margin-bottom: 15px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        button {
+            background-color: #3498db;
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #2980b9;
+        }
+        button:disabled {
+            background-color: #95a5a6;
+            cursor: not-allowed;
+        }
+        .states-container {
+            max-height: 200px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            padding: 10px;
+            border-radius: 4px;
+            margin-bottom: 15px;
+        }
+        .state-item {
+            margin-bottom: 5px;
+        }
+        .status {
+            margin-top: 20px;
+            padding: 10px;
+            background-color: #f8f9fa;
+            border-radius: 4px;
+            text-align: center;
+            font-weight: bold;
+        }
+        .results {
+            margin-top: 20px;
+            padding: 15px;
+            background-color: #e8f4f8;
+            border-radius: 4px;
+        }
+        .select-all-container {
+            margin-bottom: 10px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #eee;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>ATMB 非CMRA地址筛选工具</h1>
+        
+        <div class="section">
+            <h2>Smarty API 凭证</h2>
+            <label for="credentials">API 凭证 (格式: API_ID1=API_TOKEN1,API_ID2=API_TOKEN2)</label>
+            <input type="text" id="credentials" placeholder="输入 Smarty API 凭证">
+            <button id="save-credentials">保存凭证</button>
+        </div>
+        
+        <div class="section">
+            <h2>选择州</h2>
+            <div class="select-all-container">
+                <label>
+                    <input type="checkbox" id="select-all"> 全选/取消全选
+                </label>
+            </div>
+            <div class="states-container" id="states-list">
+                <!-- 州列表将通过JavaScript动态加载 -->
+                <div class="loading">加载州列表中...</div>
+            </div>
+        </div>
+        
+        <div class="section">
+            <h2>开始爬取</h2>
+            <p>点击下方按钮开始爬取选定州的地址并筛选非CMRA地址</p>
+            <button id="start-button">开始爬取</button>
+            
+            <div class="status" id="status">准备就绪</div>
+            
+            <div class="results" id="results" style="display: none;">
+                <h3>处理结果</h3>
+                <p>总共处理: <span id="total-count">0</span> 个地址</p>
+                <p>非CMRA地址: <span id="non-cmra-count">0</span> 个</p>
+                <p>结果保存在: <span id="output-path"></span></p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 初始化应用
+        document.addEventListener('DOMContentLoaded', function() {
+            // 通知后端初始化
+            external.invoke(JSON.stringify({ 
+                type: "Initialize" 
+            }));
+            
+            // 设置事件监听器
+            document.getElementById('save-credentials').addEventListener('click', function() {
+                const credentials = document.getElementById('credentials').value;
+                external.invoke(JSON.stringify({
+                    type: "SetCredentials",
+                    credentials: credentials
+                }));
+                alert('凭证已保存');
+            });
+            
+            document.getElementById('select-all').addEventListener('change', function() {
+                const checkboxes = document.querySelectorAll('#states-list input[type="checkbox"]');
+                checkboxes.forEach(checkbox => {
+                    checkbox.checked = this.checked;
+                });
+                updateSelectedStates();
+            });
+            
+            document.getElementById('start-button').addEventListener('click', function() {
+                if (confirm('确定开始爬取选定的州吗？')) {
+                    this.disabled = true;
+                    document.getElementById('status').textContent = '正在爬取数据...';
+                    external.invoke(JSON.stringify({ 
+                        type: "StartCrawling" 
+                    }));
+                }
+            });
+        });
+
+        // 更新州列表
+        function updateStates(state) {
+            const statesList = document.getElementById('states-list');
+            statesList.innerHTML = '';
+            
+            state.states.forEach(stateName => {
+                const stateItem = document.createElement('div');
+                stateItem.className = 'state-item';
+                
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.value = stateName;
+                checkbox.id = `state-${stateName}`;
+                checkbox.addEventListener('change', updateSelectedStates);
+                
+                const label = document.createElement('label');
+                label.htmlFor = `state-${stateName}`;
+                label.textContent = stateName;
+                
+                stateItem.appendChild(checkbox);
+                stateItem.appendChild(label);
+                statesList.appendChild(stateItem);
+            });
+            
+            // 填充凭证
+            document.getElementById('credentials').value = state.credentials;
+            
+            // 更新状态
+            document.getElementById('status').textContent = state.status;
+            
+            // 更新结果（如果有）
+            if (state.results) {
+                updateResults(state.results);
+            }
+        }
+
+        // 更新选中的州
+        function updateSelectedStates() {
+            const checkboxes = document.querySelectorAll('#states-list input[type="checkbox"]:checked');
+            const selectedStates = Array.from(checkboxes).map(cb => cb.value);
+            
+            external.invoke(JSON.stringify({
+                type: "SelectStates",
+                states: selectedStates
+            }));
+        }
+
+        // 更新状态
+        function updateStatus(status) {
+            document.getElementById('status').textContent = status;
+        }
+        
+        // 更新结果
+        function updateResults(results) {
+            document.getElementById('total-count').textContent = results.total;
+            document.getElementById('non-cmra-count').textContent = results.non_cmra;
+            document.getElementById('output-path').textContent = results.output_path;
+            document.getElementById('results').style.display = 'block';
+            document.getElementById('start-button').disabled = false;
+        }
+    </script>
+</body>
+</html>

@@ -6,11 +6,15 @@ use crate::atmb::ATMBCrawl;
 use crate::atmb::model::Mailbox;
 use crate::record::Record;
 use crate::smarty::{AdditionalInfo, SmartyClientProxy};
+use actix_web::{get, post, web, App, HttpResponse, HttpServer, Responder};
+use actix_files::Files;
+use serde::{Deserialize, Serialize};
 
 mod atmb;
 mod record;
 mod smarty;
 mod utils;
+mod cli;
 
 fn init_logger() {
     install_tracing();
@@ -38,18 +42,30 @@ fn install_tracing() {
 async fn main() {
     init_logger();
 
-    match run().await {
-        Err(e) => {
-            log::error!("Error: {:?}", e);
-            std::process::exit(1);
+    // 获取命令行参数
+    let args: Vec<String> = std::env::args().collect();
+    
+    // 根据命令行参数选择运行模式
+    let result = if args.len() > 1 {
+        match args[1].as_str() {
+            "web" => run_web_server().await,
+            _ => run_cli().await,
         }
-        _ => {}
+    } else {
+        // 默认使用CLI模式
+        run_cli().await
+    };
+
+    if let Err(e) = result {
+        log::error!("Error: {:?}", e);
+        std::process::exit(1);
     }
 }
 
-async fn run() -> color_eyre::Result<()> {
-    let atmb = ATMBCrawl::new()?;
-    let mailboxes = atmb.fetch().await?;
+async fn run_cli() -> color_eyre::Result<()> {
+    // 使用CLI应用获取用户选择的州
+    let cli_app = cli::CliApp::new()?;
+    let mailboxes = cli_app.run().await?;
 
     info!("finished fetching, got [{}] mailboxes in total", mailboxes.len());
     info!("begin to inquire mailbox address info...");
@@ -67,8 +83,7 @@ async fn run() -> color_eyre::Result<()> {
 
     let out_file = "result/mailboxes.csv";
     info!("saving records to [{}]", out_file);
-    save_records(records, out_file)?;
-    Ok(())
+    save_records(records, out_file)
 }
 
 async fn inquire_mailboxes_info(mailboxes: Vec<Mailbox>) -> color_eyre::Result<HashMap<Mailbox, AdditionalInfo>> {
@@ -78,7 +93,7 @@ async fn inquire_mailboxes_info(mailboxes: Vec<Mailbox>) -> color_eyre::Result<H
     let mailboxes_info = futures::stream::iter(mailboxes.into_iter()).enumerate().map(|(idx, mailbox)| {
         let client = &client;
         async move {
-            info!("[{}/{total}] fetching mailbox address info for [{}]", idx + 1, mailbox.name);
+            info!("[{}/{}] fetching mailbox address info for [{}]", idx + 1, total, mailbox.name);
 
             let address = &mailbox.address;
             let additional_info = match client.inquire_address(address.clone()).await {
@@ -110,5 +125,154 @@ fn save_records(mut records: Vec<Record>, save_path: impl AsRef<Path>) -> color_
     for record in &records {
         wtr.serialize(record)?;
     }
+    Ok(())
+}
+
+// 添加web服务器功能
+#[derive(Serialize, Deserialize, Clone)]
+struct WebAppState {
+    states: Vec<String>,
+    selected_states: Vec<String>,
+    credentials: String,
+    status: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct SetCredentialsRequest {
+    credentials: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct SelectStatesRequest {
+    states: Vec<String>,
+}
+
+#[get("/api/states")]
+async fn get_states(app_data: web::Data<AppData>) -> impl Responder {
+    let atmb = ATMBCrawl::new().unwrap();
+    match atmb.get_available_states().await {
+        Ok(states) => {
+            let mut state = app_data.state.lock().unwrap();
+            state.states = states.clone();
+            HttpResponse::Ok().json(states)
+        },
+        Err(e) => {
+            HttpResponse::InternalServerError().body(format!("Error: {}", e))
+        }
+    }
+}
+
+#[post("/api/credentials")]
+async fn set_credentials(req: web::Json<SetCredentialsRequest>, app_data: web::Data<AppData>) -> impl Responder {
+    let mut state = app_data.state.lock().unwrap();
+    state.credentials = req.credentials.clone();
+    std::env::set_var("CREDENTIALS", &state.credentials);
+    HttpResponse::Ok().json(state.clone())
+}
+
+#[post("/api/select-states")]
+async fn select_states(req: web::Json<SelectStatesRequest>, app_data: web::Data<AppData>) -> impl Responder {
+    let mut state = app_data.state.lock().unwrap();
+    state.selected_states = req.states.clone();
+    HttpResponse::Ok().json(state.clone())
+}
+
+#[post("/api/start")]
+async fn start_crawling(app_data: web::Data<AppData>) -> impl Responder {
+    let atmb = ATMBCrawl::new().unwrap();
+    let selected_states: Vec<String>;
+    
+    {
+        let mut state = app_data.state.lock().unwrap();
+        state.status = "正在爬取数据...".to_string();
+        selected_states = state.selected_states.clone();
+    }
+    
+    let result = if selected_states.is_empty() {
+        atmb.fetch().await
+    } else {
+        atmb.fetch_selected_states(&selected_states).await
+    };
+    
+    match result {
+        Ok(mailboxes) => {
+            let mut state = app_data.state.lock().unwrap();
+            state.status = "正在查询地址信息...".to_string();
+            
+            // 查询地址信息
+            match inquire_mailboxes_info(mailboxes).await {
+                Ok(mailboxes_info) => {
+                    // 过滤出非CMRA地址
+                    let records = mailboxes_info
+                        .into_iter()
+                        .filter_map(|(mailbox, info)| {
+                            if info.is_cmra() {
+                                None
+                            } else {
+                                Some(Record::from_mailbox_and_info(mailbox, info))
+                            }
+                        })
+                        .collect::<Vec<_>>();
+
+                    let total = records.len();
+                    let out_file = "result/mailboxes.csv";
+
+                    // 保存记录
+                    if let Err(e) = save_records(records.clone(), out_file) {
+                        state.status = format!("保存记录失败: {}", e);
+                        HttpResponse::InternalServerError().body(state.status.clone())
+                    } else {
+                        state.status = "完成".to_string();
+                        HttpResponse::Ok().json(serde_json::json!({
+                            "status": state.status,
+                            "total": total,
+                            "output_path": out_file
+                        }))
+                    }
+                }
+                Err(e) => {
+                    state.status = format!("查询地址信息失败: {}", e);
+                    HttpResponse::InternalServerError().body(state.status.clone())
+                }
+            }
+        }
+        Err(e) => {
+            let mut state = app_data.state.lock().unwrap();
+            state.status = format!("爬取数据失败: {}", e);
+            HttpResponse::InternalServerError().body(state.status.clone())
+        }
+    }
+}
+
+struct AppData {
+    state: std::sync::Mutex<WebAppState>,
+}
+
+async fn run_web_server() -> color_eyre::Result<()> {
+    let app_data = web::Data::new(AppData {
+        state: std::sync::Mutex::new(WebAppState {
+            states: Vec::new(),
+            selected_states: Vec::new(),
+            credentials: std::env::var("CREDENTIALS").unwrap_or_default(),
+            status: "准备就绪".to_string(),
+        }),
+    });
+    
+    println!("Starting web server at http://127.0.0.1:8080");
+    println!("CTRL+C to exit");
+    
+    HttpServer::new(move || {
+        App::new()
+            .app_data(app_data.clone())
+            .service(get_states)
+            .service(set_credentials)
+            .service(select_states) 
+            .service(start_crawling)
+            .service(Files::new("/", "./web").index_file("index.html"))
+    })
+    .bind("127.0.0.1:8080")?
+    .run()
+    .await?;
+    
     Ok(())
 }

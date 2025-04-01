@@ -19,7 +19,7 @@ pub struct CountryPage<'a> {
     pub states: Vec<StateHtmlInfo<'a>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct StateHtmlInfo<'a> {
     sub_url: &'a str,
     name: &'a str,

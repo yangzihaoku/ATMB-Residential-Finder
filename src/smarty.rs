@@ -146,7 +146,7 @@ pub struct AdditionalInfo {
     pub rdi: Rdi,
 }
 
-#[derive(Debug, PartialEq, Eq, Serialize, Ord, PartialOrd)]
+#[derive(Debug, PartialEq, Eq, Serialize, Ord, PartialOrd, Clone)]
 #[serde(rename_all = "PascalCase")]
 #[repr(u8)]
 pub enum Rdi {
@@ -201,7 +201,7 @@ impl TryFrom<Lookup> for AdditionalInfo {
     }
 }
 
-#[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
+#[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize, Clone)]
 #[repr(u8)]
 pub enum YesOrNo {
     N,

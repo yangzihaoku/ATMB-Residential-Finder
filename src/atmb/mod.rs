@@ -20,6 +20,17 @@ struct ATMBClient {
     client: Client,
 }
 
+impl Clone for ATMBClient {
+    fn clone(&self) -> Self {
+        Self {
+            client: Client::builder()
+                .default_headers(Self::default_headers())
+                .build()
+                .unwrap(),
+        }
+    }
+}
+
 impl ATMBClient {
     fn new() -> color_eyre::Result<Self> {
         Ok(
@@ -61,6 +72,16 @@ impl ATMBClient {
 
 pub struct ATMBCrawl {
     client: ATMBClient,
+    country_page: Option<CountryPage<'static>>,
+}
+
+impl Clone for ATMBCrawl {
+    fn clone(&self) -> Self {
+        Self {
+            client: ATMBClient::new().unwrap(),
+            country_page: None,
+        }
+    }
 }
 
 impl ATMBCrawl {
@@ -68,10 +89,68 @@ impl ATMBCrawl {
         Ok(
             Self {
                 client: ATMBClient::new()?,
+                country_page: None,
             }
         )
     }
 
+    pub async fn get_available_states(&self) -> color_eyre::Result<Vec<String>> {
+        // 获取国家页面
+        let country_html = self.client.fetch_page(US_HOME_PAGE_URL).await?;
+        let country_page = CountryPage::parse_html(&country_html)?;
+        
+        // 提取所有州的名称
+        let states = country_page.states.iter()
+            .map(|state| state.name().to_string())
+            .collect();
+        
+        Ok(states)
+    }
+    
+    pub async fn fetch_selected_states(&self, selected_states: &[String]) -> color_eyre::Result<Vec<Mailbox>> {
+        // 获取国家页面
+        let country_html = self.client.fetch_page(US_HOME_PAGE_URL).await?;
+        let country_page = CountryPage::parse_html(&country_html)?;
+        
+        // 筛选出选中的州
+        let filtered_states = country_page.states.iter()
+            .filter(|state| selected_states.contains(&state.name().to_string()))
+            .collect::<Vec<_>>();
+        
+        if filtered_states.is_empty() {
+            bail!("No states found with the provided names");
+        }
+        
+        // 创建一个新的CountryPage，只包含选中的州
+        let filtered_country_page = CountryPage {
+            states: filtered_states.into_iter().cloned().collect(),
+        };
+        
+        // 获取选中州的页面
+        let state_pages = self.fetch_state_pages(&filtered_country_page).await?;
+        let total_num = state_pages.iter().map(|sp| sp.len()).sum::<usize>();
+        
+        let mailboxes = state_pages.into_iter()
+            .filter_map(|sp| match sp.to_mailboxes() {
+                Ok(mailboxes) => Some(mailboxes),
+                Err(e) => {
+                    log::error!("cannot convert state page to mailboxes: {:?}", e);
+                    None
+                }
+            })
+            .flatten()
+            .collect::<Vec<_>>();
+
+        if mailboxes.len() != total_num {
+            bail!("Some mailboxes cannot be fetched");
+        }
+
+        // 访问每个邮箱的详细页面以获取地址行2
+        self.update_street2_for_mailbox(mailboxes).await.map_err(|e| {
+            eyre!("Some mailbox's detail cannot be fetched: {:?}", e)
+        })
+    }
+    
     pub async fn fetch(&self) -> color_eyre::Result<Vec<Mailbox>> {
         // we're only interested in US, so hardcode here.
         let country_html = self.client.fetch_page(US_HOME_PAGE_URL).await?;

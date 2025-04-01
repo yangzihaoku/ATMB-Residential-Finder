@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ATMB 非CMRA地址筛选工具</title>
+    <style>
+        body {
+            font-family: 'Microsoft YaHei', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            margin: 0;
+            padding: 0;
+            background-color: #f9f9f9;
+            color: #333;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: white;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+            border-radius: 8px;
+            margin-top: 30px;
+        }
+        header {
+            text-align: center;
+            margin-bottom: 30px;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 20px;
+        }
+        h1 {
+            color: #2c3e50;
+            margin: 0;
+        }
+        .description {
+            color: #7f8c8d;
+            margin-top: 10px;
+        }
+        .section {
+            margin-bottom: 30px;
+            padding: 20px;
+            background-color: #f5f8fa;
+            border-radius: 5px;
+        }
+        .section h2 {
+            margin-top: 0;
+            color: #3498db;
+            border-bottom: 1px solid #e0e0e0;
+            padding-bottom: 10px;
+        }
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: bold;
+        }
+        input[type="text"] {
+            width: 100%;
+            padding: 8px;
+            margin-bottom: 15px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        button {
+            background-color: #3498db;
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #2980b9;
+        }
+        button:disabled {
+            background-color: #95a5a6;
+            cursor: not-allowed;
+        }
+        .states-container {
+            max-height: 300px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 10px;
+            margin-top: 10px;
+            background-color: white;
+        }
+        .state-item {
+            margin-bottom: 5px;
+            padding: 5px;
+            border-bottom: 1px solid #f0f0f0;
+        }
+        .select-all-container {
+            margin-bottom: 10px;
+        }
+        .loading {
+            color: #7f8c8d;
+            text-align: center;
+            padding: 20px;
+        }
+        .status {
+            margin-top: 15px;
+            padding: 10px;
+            background-color: #eee;
+            border-radius: 4px;
+            text-align: center;
+            font-weight: bold;
+        }
+        .results {
+            margin-top: 20px;
+            padding: 15px;
+            background-color: #e8f4fc;
+            border-radius: 4px;
+        }
+        .error {
+            background-color: #ffecec;
+            color: #e74c3c;
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 10px;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>ATMB 非CMRA地址筛选工具</h1>
+            <p class="description">自动爬取Anytime Mailbox地址并筛选出非CMRA地址</p>
+        </header>
+        
+        <div class="section">
+            <h2>设置API凭证</h2>
+            <p>请输入Smarty Streets API凭证（格式：ID=密钥 或 多个凭证用逗号分隔）</p>
+            <input type="text" id="credentials" placeholder="例如：id1=secret1,id2=secret2">
+            <button id="save-credentials">保存凭证</button>
+            <div class="error" id="credentials-error"></div>
+        </div>
+        
+        <div class="section">
+            <h2>选择州</h2>
+            <div class="select-all-container">
+                <label>
+                    <input type="checkbox" id="select-all"> 全选/取消全选
+                </label>
+            </div>
+            <div class="states-container" id="states-list">
+                <div class="loading">加载州列表中...</div>
+            </div>
+            <div class="error" id="states-error"></div>
+        </div>
+        
+        <div class="section">
+            <h2>开始爬取</h2>
+            <p>点击下方按钮开始爬取选定州的地址并筛选非CMRA地址</p>
+            <button id="start-button">开始爬取</button>
+            
+            <div class="status" id="status">准备就绪</div>
+            
+            <div class="results" id="results" style="display: none;">
+                <h3>处理结果</h3>
+                <p>总共处理: <span id="total-count">0</span> 个地址</p>
+                <p>非CMRA地址: <span id="non-cmra-count">0</span> 个</p>
+                <p>结果保存在: <span id="output-path"></span></p>
+            </div>
+            <div class="error" id="crawl-error"></div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // 获取州列表
+            fetchStates();
+            
+            // 设置事件监听器
+            document.getElementById('save-credentials').addEventListener('click', saveCredentials);
+            document.getElementById('select-all').addEventListener('change', toggleSelectAll);
+            document.getElementById('start-button').addEventListener('click', startCrawling);
+        });
+
+        // 获取州列表
+        function fetchStates() {
+            fetch('/api/states')
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('获取州列表失败');
+                    }
+                    return response.json();
+                })
+                .then(states => {
+                    updateStatesList(states);
+                })
+                .catch(error => {
+                    document.getElementById('states-error').textContent = `错误: ${error.message}`;
+                    document.getElementById('states-error').style.display = 'block';
+                    document.getElementById('states-list').innerHTML = '<p>无法加载州列表，请检查网络连接</p>';
+                });
+        }
+
+        // 更新州列表
+        function updateStatesList(states) {
+            const statesList = document.getElementById('states-list');
+            statesList.innerHTML = '';
+            
+            if (states.length === 0) {
+                statesList.innerHTML = '<p>没有可用的州</p>';
+                return;
+            }
+            
+            states.forEach(stateName => {
+                const stateItem = document.createElement('div');
+                stateItem.className = 'state-item';
+                
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.value = stateName;
+                checkbox.id = `state-${stateName}`;
+                checkbox.addEventListener('change', updateSelectedStates);
+                
+                const label = document.createElement('label');
+                label.htmlFor = `state-${stateName}`;
+                label.textContent = stateName;
+                
+                stateItem.appendChild(checkbox);
+                stateItem.appendChild(label);
+                statesList.appendChild(stateItem);
+            });
+        }
+
+        // 保存凭证
+        function saveCredentials() {
+            const credentials = document.getElementById('credentials').value.trim();
+            const errorElem = document.getElementById('credentials-error');
+            
+            if (!credentials) {
+                errorElem.textContent = '请输入凭证';
+                errorElem.style.display = 'block';
+                return;
+            }
+            
+            fetch('/api/credentials', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ credentials }),
+            })
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('保存凭证失败');
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    alert('凭证已保存');
+                    errorElem.style.display = 'none';
+                })
+                .catch(error => {
+                    errorElem.textContent = `错误: ${error.message}`;
+                    errorElem.style.display = 'block';
+                });
+        }
+
+        // 全选/取消全选
+        function toggleSelectAll() {
+            const isChecked = document.getElementById('select-all').checked;
+            const checkboxes = document.querySelectorAll('#states-list input[type="checkbox"]');
+            
+            checkboxes.forEach(checkbox => {
+                checkbox.checked = isChecked;
+            });
+            
+            updateSelectedStates();
+        }
+
+        // 更新选定的州
+        function updateSelectedStates() {
+            const checkboxes = document.querySelectorAll('#states-list input[type="checkbox"]:checked');
+            const selectedStates = Array.from(checkboxes).map(cb => cb.value);
+            
+            fetch('/api/select-states', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ states: selectedStates }),
+            })
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('更新选定州失败');
+                    }
+                    return response.json();
+                })
+                .catch(error => {
+                    document.getElementById('states-error').textContent = `错误: ${error.message}`;
+                    document.getElementById('states-error').style.display = 'block';
+                });
+        }
+
+        // 开始爬取
+        function startCrawling() {
+            if (!confirm('确定开始爬取选定的州吗？')) {
+                return;
+            }
+            
+            const startButton = document.getElementById('start-button');
+            startButton.disabled = true;
+            
+            const statusElem = document.getElementById('status');
+            statusElem.textContent = '正在爬取数据...';
+            
+            document.getElementById('results').style.display = 'none';
+            document.getElementById('crawl-error').style.display = 'none';
+            
+            fetch('/api/start', {
+                method: 'POST',
+            })
+                .then(response => {
+                    if (!response.ok) {
+                        return response.text().then(text => {
+                            throw new Error(text || '爬取过程中出错');
+                        });
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    statusElem.textContent = data.status || '完成';
+                    
+                    if (data.total !== undefined) {
+                        document.getElementById('total-count').textContent = data.total;
+                        document.getElementById('non-cmra-count').textContent = data.total; // 因为结果已过滤，所以相同
+                        document.getElementById('output-path').textContent = data.output_path;
+                        document.getElementById('results').style.display = 'block';
+                    }
+                    
+                    startButton.disabled = false;
+                })
+                .catch(error => {
+                    statusElem.textContent = '发生错误';
+                    document.getElementById('crawl-error').textContent = `错误: ${error.message}`;
+                    document.getElementById('crawl-error').style.display = 'block';
+                    startButton.disabled = false;
+                });
+        }
+    </script>
+</body>
+</html> 

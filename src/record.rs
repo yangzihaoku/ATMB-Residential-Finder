@@ -3,7 +3,7 @@ use crate::atmb::model::Mailbox;
 use crate::smarty::{AdditionalInfo, Rdi, YesOrNo};
 
 /// The final struct that will be used to store the data
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct Record {
     name: String,
     street: String,
