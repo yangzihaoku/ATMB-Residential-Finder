@@ -72,26 +72,13 @@ impl ATMBClient {
 
 pub struct ATMBCrawl {
     client: ATMBClient,
-    country_page: Option<CountryPage<'static>>,
-}
-
-impl Clone for ATMBCrawl {
-    fn clone(&self) -> Self {
-        Self {
-            client: ATMBClient::new().unwrap(),
-            country_page: None,
-        }
-    }
 }
 
 impl ATMBCrawl {
     pub fn new() -> color_eyre::Result<Self> {
-        Ok(
-            Self {
-                client: ATMBClient::new()?,
-                country_page: None,
-            }
-        )
+        Ok(Self {
+            client: ATMBClient::new()?,
+        })
     }
 
     pub async fn get_available_states(&self) -> color_eyre::Result<Vec<String>> {

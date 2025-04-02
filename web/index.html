@@ -122,6 +122,102 @@
             margin-top: 10px;
             display: none;
         }
+        .credential-row {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+            align-items: flex-end;
+        }
+        .input-group {
+            flex: 1;
+        }
+        .input-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-size: 14px;
+        }
+        .remove-credential {
+            background-color: #e74c3c;
+            color: white;
+            border: none;
+            padding: 8px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .remove-credential:hover {
+            background-color: #c0392b;
+        }
+        #add-credential {
+            background-color: #2ecc71;
+            margin-right: 10px;
+        }
+        #add-credential:hover {
+            background-color: #27ae60;
+        }
+        .results-table-container {
+            margin-top: 20px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 20px;
+            background-color: white;
+        }
+        .table-controls {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 15px;
+            align-items: center;
+        }
+        .table-controls input {
+            flex: 1;
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        .table-controls select {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+            min-width: 150px;
+        }
+        .table-container {
+            max-height: 500px;
+            overflow-y: auto;
+            margin-top: 20px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+            font-size: 14px;
+        }
+        th, td {
+            padding: 12px 8px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        th {
+            background-color: #f5f5f5;
+            font-weight: bold;
+            position: sticky;
+            top: 0;
+            z-index: 1;
+        }
+        tr:hover {
+            background-color: #f9f9f9;
+        }
+        .view-link {
+            color: #3498db;
+            text-decoration: none;
+            padding: 4px 8px;
+            border-radius: 4px;
+            background-color: #f0f7ff;
+        }
+        .view-link:hover {
+            background-color: #e1f0ff;
+        }
     </style>
 </head>
 <body>
@@ -133,8 +229,21 @@
         
         <div class="section">
             <h2>设置API凭证</h2>
-            <p>请输入Smarty Streets API凭证（格式：ID=密钥 或 多个凭证用逗号分隔）</p>
-            <input type="text" id="credentials" placeholder="例如：id1=secret1,id2=secret2">
+            <p>请输入Smarty Streets API凭证（可以添加多个）</p>
+            <div id="credentials-container">
+                <div class="credential-row">
+                    <div class="input-group">
+                        <label>App ID</label>
+                        <input type="text" class="app-id" placeholder="输入App ID">
+                    </div>
+                    <div class="input-group">
+                        <label>App Key</label>
+                        <input type="text" class="app-key" placeholder="输入App Key">
+                    </div>
+                    <button class="remove-credential" style="display: none;">删除</button>
+                </div>
+            </div>
+            <button id="add-credential">添加更多凭证</button>
             <button id="save-credentials">保存凭证</button>
             <div class="error" id="credentials-error"></div>
         </div>
@@ -161,9 +270,40 @@
             
             <div class="results" id="results" style="display: none;">
                 <h3>处理结果</h3>
-                <p>总共处理: <span id="total-count">0</span> 个地址</p>
-                <p>非CMRA地址: <span id="non-cmra-count">0</span> 个</p>
+                <p>总共处理: <span id="total-processed">0</span> 个地址</p>
+                <p>非CMRA地址: <span id="total-non-cmra">0</span> 个</p>
                 <p>结果保存在: <span id="output-path"></span></p>
+                
+                <div class="results-table-container">
+                    <h4>筛选结果预览</h4>
+                    <div class="table-controls">
+                        <input type="text" id="search-input" placeholder="搜索地址...">
+                        <select id="sort-select">
+                            <option value="name">按名称排序</option>
+                            <option value="state">按州排序</option>
+                            <option value="city">按城市排序</option>
+                        </select>
+                    </div>
+                    <div class="table-container">
+                        <table id="results-table">
+                            <thead>
+                                <tr>
+                                    <th>名称</th>
+                                    <th>地址</th>
+                                    <th>城市</th>
+                                    <th>州</th>
+                                    <th>邮编</th>
+                                    <th>价格</th>
+                                    <th>CMRA</th>
+                                    <th>RDI</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
             </div>
             <div class="error" id="crawl-error"></div>
         </div>
@@ -175,9 +315,13 @@
             fetchStates();
             
             // 设置事件监听器
+            document.getElementById('add-credential').addEventListener('click', addCredentialRow);
             document.getElementById('save-credentials').addEventListener('click', saveCredentials);
             document.getElementById('select-all').addEventListener('change', toggleSelectAll);
             document.getElementById('start-button').addEventListener('click', startCrawling);
+            
+            // 设置搜索和排序功能
+            setupSearch();
         });
 
         // 获取州列表
@@ -229,13 +373,61 @@
             });
         }
 
+        // 添加凭证行
+        function addCredentialRow() {
+            const container = document.getElementById('credentials-container');
+            const row = document.createElement('div');
+            row.className = 'credential-row';
+            
+            const idGroup = document.createElement('div');
+            idGroup.className = 'input-group';
+            idGroup.innerHTML = `
+                <label>App ID</label>
+                <input type="text" class="app-id" placeholder="输入App ID">
+            `;
+            
+            const keyGroup = document.createElement('div');
+            keyGroup.className = 'input-group';
+            keyGroup.innerHTML = `
+                <label>App Key</label>
+                <input type="text" class="app-key" placeholder="输入App Key">
+            `;
+            
+            const removeButton = document.createElement('button');
+            removeButton.className = 'remove-credential';
+            removeButton.textContent = '删除';
+            removeButton.style.display = 'block';
+            removeButton.onclick = () => row.remove();
+            
+            row.appendChild(idGroup);
+            row.appendChild(keyGroup);
+            row.appendChild(removeButton);
+            container.appendChild(row);
+        }
+        
+        // 获取所有凭证
+        function getCredentials() {
+            const rows = document.querySelectorAll('.credential-row');
+            const credentials = [];
+            
+            rows.forEach(row => {
+                const id = row.querySelector('.app-id').value.trim();
+                const key = row.querySelector('.app-key').value.trim();
+                if (id && key) {
+                    credentials.push(`${id}=${key}`);
+                }
+            });
+            
+            return credentials.join(',');
+        }
+        
         // 保存凭证
         function saveCredentials() {
-            const credentials = document.getElementById('credentials').value.trim();
+            const credentials = getCredentials();
             const errorElem = document.getElementById('credentials-error');
             
             if (!credentials) {
-                errorElem.textContent = '请输入凭证';
+                errorElem.textContent = '请至少输入一组有效的凭证';
                 errorElem.style.display = 'block';
                 return;
             }
@@ -328,11 +520,12 @@
                 .then(data => {
                     statusElem.textContent = data.status || '完成';
                     
-                    if (data.total !== undefined) {
-                        document.getElementById('total-count').textContent = data.total;
-                        document.getElementById('non-cmra-count').textContent = data.total; // 因为结果已过滤，所以相同
+                    if (data.total_processed !== undefined) {
+                        document.getElementById('total-processed').textContent = data.total_processed;
+                        document.getElementById('total-non-cmra').textContent = data.total_non_cmra;
                         document.getElementById('output-path').textContent = data.output_path;
                         document.getElementById('results').style.display = 'block';
+                        updateResultsTable(data.results);
                     }
                     
                     startButton.disabled = false;
@@ -343,6 +536,73 @@
                     document.getElementById('crawl-error').style.display = 'block';
                     startButton.disabled = false;
                 });
+        }
+
+        // 更新结果表格
+        function updateResultsTable(data) {
+            const tbody = document.querySelector('#results-table tbody');
+            tbody.innerHTML = '';
+            
+            data.forEach(record => {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td>${record.name || ''}</td>
+                    <td>${record.street || ''}</td>
+                    <td>${record.city || ''}</td>
+                    <td>${record.state || ''}</td>
+                    <td>${record.zip || ''}</td>
+                    <td>${record.price || ''}</td>
+                    <td>${record.CMRA || ''}</td>
+                    <td>${record.rdi || ''}</td>
+                    <td><a href="${record.link || ''}" target="_blank" class="view-link">查看</a></td>
+                `;
+                tbody.appendChild(row);
+            });
+        }
+        
+        // 搜索功能
+        function setupSearch() {
+            const searchInput = document.getElementById('search-input');
+            const sortSelect = document.getElementById('sort-select');
+            
+            searchInput.addEventListener('input', filterTable);
+            sortSelect.addEventListener('change', sortTable);
+        }
+        
+        function filterTable() {
+            const searchText = document.getElementById('search-input').value.toLowerCase();
+            const rows = document.querySelectorAll('#results-table tbody tr');
+            
+            rows.forEach(row => {
+                const text = row.textContent.toLowerCase();
+                row.style.display = text.includes(searchText) ? '' : 'none';
+            });
+        }
+        
+        function sortTable() {
+            const sortBy = document.getElementById('sort-select').value;
+            const tbody = document.querySelector('#results-table tbody');
+            const rows = Array.from(tbody.querySelectorAll('tr'));
+            
+            rows.sort((a, b) => {
+                const aValue = a.querySelector(`td:nth-child(${getColumnIndex(sortBy)})`).textContent;
+                const bValue = b.querySelector(`td:nth-child(${getColumnIndex(sortBy)})`).textContent;
+                return aValue.localeCompare(bValue);
+            });
+            
+            rows.forEach(row => tbody.appendChild(row));
+        }
+
+        function getColumnIndex(sortBy) {
+            const columnMap = {
+                'name': 1,
+                'state': 4,
+                'city': 3,
+                'zip': 5,
+                'cmra': 7,
+                'rdi': 8
+            };
+            return columnMap[sortBy] || 1;
         }
     </script>
 </body>

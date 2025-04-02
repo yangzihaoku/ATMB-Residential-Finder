@@ -147,6 +147,15 @@ struct SelectStatesRequest {
     states: Vec<String>,
 }
 
+#[derive(Serialize)]
+struct CrawlResult {
+    status: String,
+    total_processed: usize,  // 总共处理的地址数
+    total_non_cmra: usize,   // 非CMRA地址数
+    output_path: String,
+    results: Vec<Record>,
+}
+
 #[get("/api/states")]
 async fn get_states(app_data: web::Data<AppData>) -> impl Responder {
     let atmb = ATMBCrawl::new().unwrap();
@@ -196,6 +205,7 @@ async fn start_crawling(app_data: web::Data<AppData>) -> impl Responder {
     
     match result {
         Ok(mailboxes) => {
+            let total_processed = mailboxes.len();
             let mut state = app_data.state.lock().unwrap();
             state.status = "正在查询地址信息...".to_string();
             
@@ -214,7 +224,7 @@ async fn start_crawling(app_data: web::Data<AppData>) -> impl Responder {
                         })
                         .collect::<Vec<_>>();
 
-                    let total = records.len();
+                    let total_non_cmra = records.len();
                     let out_file = "result/mailboxes.csv";
 
                     // 保存记录
@@ -223,11 +233,13 @@ async fn start_crawling(app_data: web::Data<AppData>) -> impl Responder {
                         HttpResponse::InternalServerError().body(state.status.clone())
                     } else {
                         state.status = "完成".to_string();
-                        HttpResponse::Ok().json(serde_json::json!({
-                            "status": state.status,
-                            "total": total,
-                            "output_path": out_file
-                        }))
+                        HttpResponse::Ok().json(CrawlResult {
+                            status: state.status.clone(),
+                            total_processed,
+                            total_non_cmra,
+                            output_path: out_file.to_string(),
+                            results: records,
+                        })
                     }
                 }
                 Err(e) => {

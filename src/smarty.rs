@@ -172,10 +172,6 @@ impl AdditionalInfo {
     pub fn is_cmra(&self) -> bool {
         self.cmra == YesOrNo::Y
     }
-
-    pub fn is_residential(&self) -> bool {
-        self.rdi == Rdi::Residential
-    }
 }
 
 impl TryFrom<Lookup> for AdditionalInfo {
